@@ -13,8 +13,3 @@ dependencies = [
 dev = [
     "pytest==6.2.5",
 ]
-
-[tool.uv.workspace]
-members = [
-    "backend/populator",
-]
