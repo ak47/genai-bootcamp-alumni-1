@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Iterable, Optional
 
 import boto3
 from botocore.exceptions import ClientError
+from populator_types import (
+    LambdaContext,
+    LambdaEvent,
+    LambdaResponse,
+    SqlParameter,
+    SqlParameters,
+    SqlResult,
+)
 
 LOGGER = logging.getLogger()
 LOGGER.setLevel(logging.INFO)
@@ -27,7 +34,7 @@ S3_CLIENT = boto3.client("s3")
 RDS_DATA_CLIENT = boto3.client("rds-data")
 
 
-def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+def handler(event: LambdaEvent, context: LambdaContext) -> LambdaResponse:
     """AWS Lambda handler."""
     LOGGER.info("Starting crash data load")
     copy_dataset_to_bucket()
@@ -65,25 +72,53 @@ def copy_dataset_to_bucket() -> None:
 
 
 def ensure_database_exists() -> None:
-    """Create the nycrashes database when it does not already exist."""
+    """Drop and recreate the nycrashes database to ensure a clean state."""
+    LOGGER.info("Recreating database %s", DATABASE_NAME)
+    drop_database_if_exists()
     try:
         execute_sql(
             f'CREATE DATABASE "{DATABASE_NAME}"',
             database="postgres",
         )
-        LOGGER.info("Database %s created", DATABASE_NAME)
     except ClientError as error:
-        if error.response.get("Error", {}).get("Code") == "BadRequestException" and "already exists" in error.response.get("Error", {}).get("Message", ""):
-            LOGGER.info("Database %s already exists; continuing", DATABASE_NAME)
-            return
+        LOGGER.error("Unable to create database %s: %s", DATABASE_NAME, error, exc_info=True)
         raise
+    LOGGER.info("Database %s created", DATABASE_NAME)
+
+
+def drop_database_if_exists() -> None:
+    """Drop the nycrashes database when it already exists."""
+    LOGGER.info("Dropping database %s if it exists", DATABASE_NAME)
+    terminate_database_connections()
+    try:
+        execute_sql(
+            f'DROP DATABASE IF EXISTS "{DATABASE_NAME}"',
+            database="postgres",
+        )
+    except ClientError as error:
+        LOGGER.error("Unable to drop database %s: %s", DATABASE_NAME, error, exc_info=True)
+        raise
+
+
+def terminate_database_connections() -> None:
+    """Terminate existing connections to the nycrashes database."""
+    execute_sql(
+        """
+        SELECT pg_terminate_backend(pid)
+        FROM pg_stat_activity
+        WHERE datname = :database_name
+          AND pid <> pg_backend_pid();
+        """,
+        database="postgres",
+        parameters=[_string_param("database_name", DATABASE_NAME)],
+    )
 
 
 def enable_extensions() -> None:
     """Enable required database extensions."""
     for extension in ("aws_s3", "postgis"):
         execute_sql(
-            f"CREATE EXTENSION IF NOT EXISTS {extension};",
+            f"CREATE EXTENSION IF NOT EXISTS {extension} CASCADE;",
             database=DATABASE_NAME,
         )
 
@@ -143,7 +178,6 @@ def recreate_staging_table() -> None:
     execute_sql(
         f"""
         CREATE TABLE {STAGING_TABLE} (
-            collision_id BIGINT PRIMARY KEY,
             crash_date TIMESTAMP WITHOUT TIME ZONE,
             crash_time TEXT,
             borough TEXT,
@@ -152,8 +186,8 @@ def recreate_staging_table() -> None:
             longitude DOUBLE PRECISION,
             location TEXT,
             on_street_name TEXT,
-            off_street_name TEXT,
             cross_street_name TEXT,
+            off_street_name TEXT,
             number_of_persons_injured INTEGER,
             number_of_persons_killed INTEGER,
             number_of_pedestrians_injured INTEGER,
@@ -167,11 +201,13 @@ def recreate_staging_table() -> None:
             contributing_factor_vehicle_3 TEXT,
             contributing_factor_vehicle_4 TEXT,
             contributing_factor_vehicle_5 TEXT,
+            collision_id BIGINT,
             vehicle_type_code1 TEXT,
             vehicle_type_code2 TEXT,
             vehicle_type_code3 TEXT,
             vehicle_type_code4 TEXT,
-            vehicle_type_code5 TEXT
+            vehicle_type_code5 TEXT,
+            PRIMARY KEY (collision_id)
         );
         """,
         database=DATABASE_NAME,
@@ -244,8 +280,9 @@ def populate_target_table() -> None:
             latitude,
             longitude,
             CASE
-                WHEN location IS NULL OR TRIM(location) = '' THEN NULL
-                ELSE ST_SetSRID(ST_GeomFromText(location), 4326)
+                WHEN latitude IS NOT NULL AND longitude IS NOT NULL
+                    THEN ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
+                ELSE NULL
             END AS location,
             on_street_name,
             off_street_name,
@@ -311,10 +348,10 @@ def execute_sql(
     sql: str,
     *,
     database: str,
-    parameters: Optional[Iterable[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
+    parameters: SqlParameters | None = None,
+) -> SqlResult:
     """Execute a SQL statement using the RDS Data API."""
-    kwargs: Dict[str, Any] = {
+    kwargs: dict[str, object] = {
         "resourceArn": CLUSTER_ARN,
         "secretArn": SECRET_ARN,
         "database": database,
@@ -326,7 +363,7 @@ def execute_sql(
     return RDS_DATA_CLIENT.execute_statement(**kwargs)
 
 
-def _string_param(name: str, value: str) -> Dict[str, Any]:
+def _string_param(name: str, value: str) -> SqlParameter:
     return {"name": name, "value": {"stringValue": value}}
 
 

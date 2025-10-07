@@ -28,10 +28,19 @@ class Backend(Construct):
             description="Security group for Aurora cluster",
             allow_all_outbound=True,
         )
+
+        self.lambda_security_group = ec2.SecurityGroup(
+            self,
+            "PopulatorSecurityGroup",
+            vpc=vpc,
+            description="Security group for Lambda populator function",
+            allow_all_outbound=True,
+        )
+
         self.database_security_group.add_ingress_rule(
-            peer=ec2.Peer.security_group_id(vpc.vpc_default_security_group),
+            peer=ec2.Peer.security_group_id(self.lambda_security_group.security_group_id),
             connection=ec2.Port.tcp(5432),
-            description="Allow Postgres access from VPC default security group",
+            description="Allow Postgres access from Lambda populator function security group",
         )
 
         self.source_bucket = s3.Bucket(
@@ -99,11 +108,7 @@ class Backend(Construct):
             memory_size=1024,
             log_retention=logs.RetentionDays.ONE_MONTH,
             vpc=vpc,
-            security_groups=[ec2.SecurityGroup.from_security_group_id(
-                self,
-                "LambdaSecurityGroup",
-                security_group_id=vpc.vpc_default_security_group,
-            )],
+            security_groups=[self.lambda_security_group],
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
             environment={
                 "SOURCE_DATA_BUCKET": self.DATA_SOURCE_BUCKET,

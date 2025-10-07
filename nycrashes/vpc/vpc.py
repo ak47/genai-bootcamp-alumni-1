@@ -24,3 +24,13 @@ class VPC(Construct):
                 ),
             ],
         )
+
+        self.s3_gateway_endpoint = self.vpc.add_gateway_endpoint(
+            "S3GatewayEndpoint",
+            service=ec2.GatewayVpcEndpointAwsService.S3,
+            subnets=[
+                ec2.SubnetSelection(
+                    subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS,
+                ),
+            ],
+        )
