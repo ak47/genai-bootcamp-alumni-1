@@ -6,7 +6,7 @@ import logging
 import os
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, WaiterError
 from populator_types import (
     LambdaContext,
     LambdaEvent,
@@ -47,7 +47,8 @@ def handler(event: LambdaEvent, context: LambdaContext) -> LambdaResponse:
 
     LOGGER.info("Handling request type: %s", request_type)
     if request_type == "Delete":
-        LOGGER.info("Delete request received; skipping population.")
+        LOGGER.info("Delete request received; starting cleanup.")
+        cleanup_on_delete()
         return {"PhysicalResourceId": physical_resource_id, "status": "skipped"}
 
     wait_for_cluster_available()
@@ -84,6 +85,79 @@ def copy_dataset_to_bucket() -> None:
     except ClientError as error:
         LOGGER.error("Unable to copy dataset: %s", error, exc_info=True)
         raise
+
+
+def cleanup_on_delete() -> None:
+    """Best-effort cleanup for stack deletion."""
+    try:
+        cleanup_database_for_delete()
+    except Exception as error:  # noqa: BLE001 - log and continue during delete
+        LOGGER.warning("Database cleanup during delete failed: %s", error, exc_info=True)
+    try:
+        cleanup_dataset_copy()
+    except Exception as error:  # noqa: BLE001 - log and continue during delete
+        LOGGER.warning("Dataset cleanup during delete failed: %s", error, exc_info=True)
+
+
+def cleanup_database_for_delete() -> None:
+    """Drop the project database before the cluster is destroyed."""
+    if not CLUSTER_IDENTIFIER:
+        LOGGER.info("CLUSTER_IDENTIFIER not provided; skipping database cleanup.")
+        return
+
+    LOGGER.info("Ensuring cluster %s is available for cleanup", CLUSTER_IDENTIFIER)
+    try:
+        wait_for_cluster_available()
+    except WaiterError as error:
+        LOGGER.info(
+            "Cluster %s is not available (likely deleting); skipping cleanup: %s",
+            CLUSTER_IDENTIFIER,
+            error,
+        )
+        return
+    except ClientError as error:
+        LOGGER.info(
+            "Cluster %s could not be described; skipping cleanup: %s",
+            CLUSTER_IDENTIFIER,
+            error,
+        )
+        return
+
+    LOGGER.info("Dropping database %s prior to cluster removal", DATABASE_NAME)
+    drop_database_if_exists()
+    LOGGER.info("Database cleanup complete")
+
+
+def cleanup_dataset_copy() -> None:
+    """Delete the dataset copy stored in the project bucket."""
+    if DESTINATION_BUCKET == S3_SOURCE_BUCKET and DESTINATION_KEY == S3_SOURCE_KEY:
+        LOGGER.info("Destination dataset is the shared source; skipping deletion.")
+        return
+
+    LOGGER.info(
+        "Deleting dataset copy from s3://%s/%s if it exists",
+        DESTINATION_BUCKET,
+        DESTINATION_KEY,
+    )
+
+    try:
+        S3_CLIENT.delete_object(Bucket=DESTINATION_BUCKET, Key=DESTINATION_KEY)
+    except ClientError as error:
+        error_code = error.response.get("Error", {}).get("Code")
+        if error_code in {"NoSuchBucket", "NoSuchKey"}:
+            LOGGER.info(
+                "Dataset copy already removed (code=%s); continuing stack deletion",
+                error_code,
+            )
+            return
+        LOGGER.error("Failed to delete dataset copy: %s", error, exc_info=True)
+        raise
+
+    LOGGER.info(
+        "Removed dataset copy from s3://%s/%s",
+        DESTINATION_BUCKET,
+        DESTINATION_KEY,
+    )
 
 
 def ensure_database_exists() -> None:
