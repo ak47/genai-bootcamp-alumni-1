@@ -1,9 +1,4 @@
-from aws_cdk import (
-    Aws,
-    BundlingOptions,
-    Duration,
-    RemovalPolicy,
-)
+from aws_cdk import Aws, BundlingOptions, CfnOutput, Duration, RemovalPolicy
 import aws_cdk.aws_ec2 as ec2
 import aws_cdk.aws_iam as iam
 import aws_cdk.aws_lambda as _lambda
@@ -134,4 +129,108 @@ class Backend(Construct):
                     f"arn:aws:s3:::{self.DATA_SOURCE_BUCKET}/*",
                 ],
             )
+        )
+
+        self.session_bucket = s3.Bucket(
+            self,
+            "ChatSessionBucket",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            auto_delete_objects=True,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
+        chat_bundling = BundlingOptions(
+            image=_lambda.Runtime.PYTHON_3_12.bundling_image,
+            command=[
+                "bash",
+                "-c",
+                "pip install uv && "
+                "uv export --frozen --no-dev --no-editable -o requirements.txt && "
+                "pip install --require-hashes -r requirements.txt -t /asset-output && "
+                "pip install uv -t /asset-output && "
+                "cp -r . /asset-output",
+            ],
+            user="root",
+            platform="linux/amd64",
+        )
+
+        adapter_layer = _lambda.LayerVersion.from_layer_version_arn(
+            self,
+            "LambdaWebAdapterLayer",
+            layer_version_arn=(
+                "arn:aws:lambda:"
+                f"{Aws.REGION}:753240598075:layer:LambdaAdapterLayerX86:22"
+            ),
+        )
+
+        self.chat_function = _lambda.Function(
+            self,
+            "ChatFunction",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="app.main.app",
+            code=_lambda.Code.from_asset("backend/chat", bundling=chat_bundling),
+            timeout=Duration.minutes(1),
+            memory_size=1024,
+            log_retention=logs.RetentionDays.ONE_MONTH,
+            environment={
+                "AWS_LAMBDA_EXEC_WRAPPER": "/opt/bootstrap",
+                "AWS_LWA_INVOKE_MODE": "RESPONSE_STREAM",
+                "CLUSTER_ARN": self.cluster.cluster_arn,
+                "DATABASE_NAME": self.DATABASE_NAME,
+                "MODEL_ID": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                "PORT": "8080",
+                "PATH": "/var/task/bin:/usr/local/bin:/usr/bin:/bin",
+                "SECRET_ARN": self.cluster.secret.secret_arn,
+                "STATE_BUCKET": self.session_bucket.bucket_name,
+            },
+            layers=[adapter_layer],
+        )
+
+        self.session_bucket.grant_read_write(self.chat_function)
+        self.cluster.secret.grant_read(self.chat_function)
+        self.cluster.grant_data_api_access(self.chat_function)
+
+        self.chat_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "rds-data:BatchExecuteStatement",
+                    "rds-data:BeginTransaction",
+                    "rds-data:CommitTransaction",
+                    "rds-data:ExecuteSql",
+                    "rds-data:ExecuteStatement",
+                    "rds-data:RollbackTransaction",
+                ],
+                resources=[self.cluster.cluster_arn],
+            )
+        )
+
+        self.chat_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[self.cluster.secret.secret_arn],
+            )
+        )
+
+        self.chat_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "bedrock:InvokeModel",
+                    "bedrock:InvokeModelWithResponseStream",
+                ],
+                resources=[f"arn:aws:bedrock:{Aws.REGION}::foundation-model/*"],
+            )
+        )
+
+        self.chat_function_url = self.chat_function.add_function_url(
+            auth_type=_lambda.FunctionUrlAuthType.NONE,
+            invoke_mode=_lambda.InvokeMode.RESPONSE_STREAM,
+        )
+
+        CfnOutput(
+            self,
+            "ChatFunctionUrl",
+            value=self.chat_function_url.url,
+            description="Public Function URL for the chat service.",
         )
