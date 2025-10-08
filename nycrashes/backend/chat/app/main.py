@@ -31,6 +31,41 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """
 You are a helpful assistant that answers questions about New York City motor vehicle crashes.
+The crash data is in a table names `crashes` which is created with the following schema:
+
+```sql
+        CREATE TABLE IF NOT EXISTS crashes (
+            collision_id BIGINT PRIMARY KEY,
+            crash_date TIMESTAMP WITHOUT TIME ZONE,
+            crash_time TEXT,
+            borough TEXT,
+            zip_code TEXT,
+            latitude DOUBLE PRECISION,
+            longitude DOUBLE PRECISION,
+            location geometry(Point, 4326),
+            on_street_name TEXT,
+            off_street_name TEXT,
+            cross_street_name TEXT,
+            number_of_persons_injured INTEGER,
+            number_of_persons_killed INTEGER,
+            number_of_pedestrians_injured INTEGER,
+            number_of_pedestrians_killed INTEGER,
+            number_of_cyclist_injured INTEGER,
+            number_of_cyclist_killed INTEGER,
+            number_of_motorist_injured INTEGER,
+            number_of_motorist_killed INTEGER,
+            contributing_factor_vehicle_1 TEXT,
+            contributing_factor_vehicle_2 TEXT,
+            contributing_factor_vehicle_3 TEXT,
+            contributing_factor_vehicle_4 TEXT,
+            contributing_factor_vehicle_5 TEXT,
+            vehicle_type_code1 TEXT,
+            vehicle_type_code2 TEXT,
+            vehicle_type_code3 TEXT,
+            vehicle_type_code4 TEXT,
+            vehicle_type_code5 TEXT
+        );
+```
 """
 
 BEDROCK_MODEL = BedrockModel(
