@@ -5,6 +5,7 @@ import aws_cdk.aws_lambda as _lambda
 import aws_cdk.aws_logs as logs
 import aws_cdk.aws_rds as rds
 import aws_cdk.aws_s3 as s3
+import aws_cdk.custom_resources as cr
 from constructs import Construct
 
 
@@ -113,6 +114,7 @@ class Backend(Construct):
                 "CLUSTER_ARN": self.cluster.cluster_arn,
                 "SECRET_ARN": self.cluster.secret.secret_arn,
                 "DATABASE_NAME": self.DATABASE_NAME,
+                "CLUSTER_IDENTIFIER": self.cluster.cluster_identifier,
             },
         )
 
@@ -130,6 +132,31 @@ class Backend(Construct):
                 ],
             )
         )
+
+        self.populator_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["rds:DescribeDBClusters"],
+                resources=["*"],
+            )
+        )
+
+        self.populator_provider = cr.Provider(
+            self,
+            "PopulatorProvider",
+            on_event_handler=self.populator_function,
+            log_retention=logs.RetentionDays.ONE_WEEK,
+        )
+
+        self.database_populator = cr.CustomResource(
+            self,
+            "PopulateDatabase",
+            service_token=self.populator_provider.service_token,
+            properties={
+                "DataObjectKey": self.DATA_SOURCE_KEY,
+                "DatabaseName": self.DATABASE_NAME,
+            },
+        )
+        self.database_populator.node.add_dependency(self.cluster)
 
         self.session_bucket = s3.Bucket(
             self,

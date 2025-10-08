@@ -26,16 +26,31 @@ DESTINATION_KEY = os.environ.get("DESTINATION_KEY", S3_SOURCE_KEY)
 CLUSTER_ARN = os.environ["CLUSTER_ARN"]
 SECRET_ARN = os.environ["SECRET_ARN"]
 DATABASE_NAME = os.environ["DATABASE_NAME"]
+CLUSTER_IDENTIFIER = os.environ.get("CLUSTER_IDENTIFIER", "")
 AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 
 STAGING_TABLE = "crashes_staging"
 
 S3_CLIENT = boto3.client("s3")
 RDS_DATA_CLIENT = boto3.client("rds-data")
+RDS_CLIENT = boto3.client("rds")
 
 
 def handler(event: LambdaEvent, context: LambdaContext) -> LambdaResponse:
     """AWS Lambda handler."""
+    request_type = event.get("RequestType") if isinstance(event, dict) else None
+    physical_resource_id = (
+        event.get("PhysicalResourceId")
+        if isinstance(event, dict)
+        else None
+    ) or f"{CLUSTER_IDENTIFIER or 'nycrashes'}-populator"
+
+    LOGGER.info("Handling request type: %s", request_type)
+    if request_type == "Delete":
+        LOGGER.info("Delete request received; skipping population.")
+        return {"PhysicalResourceId": physical_resource_id, "status": "skipped"}
+
+    wait_for_cluster_available()
     LOGGER.info("Starting crash data load")
     copy_dataset_to_bucket()
     ensure_database_exists()
@@ -43,7 +58,7 @@ def handler(event: LambdaEvent, context: LambdaContext) -> LambdaResponse:
     create_target_table()
     load_dataset()
     LOGGER.info("Crash data load complete")
-    return {"status": "complete"}
+    return {"PhysicalResourceId": physical_resource_id, "status": "complete"}
 
 
 def copy_dataset_to_bucket() -> None:
@@ -365,6 +380,25 @@ def execute_sql(
 
 def _string_param(name: str, value: str) -> SqlParameter:
     return {"name": name, "value": {"stringValue": value}}
+
+
+def wait_for_cluster_available() -> None:
+    if not CLUSTER_IDENTIFIER:
+        LOGGER.warning("CLUSTER_IDENTIFIER not provided; skipping availability wait.")
+        return
+
+    LOGGER.info("Waiting for cluster %s to become available", CLUSTER_IDENTIFIER)
+    waiter = RDS_CLIENT.get_waiter("db_cluster_available")
+    try:
+        waiter.wait(DBClusterIdentifier=CLUSTER_IDENTIFIER)
+    except ClientError as error:
+        LOGGER.error(
+            "Cluster %s failed to become available: %s",
+            CLUSTER_IDENTIFIER,
+            error,
+            exc_info=True,
+        )
+        raise
 
 
 if __name__ == "__main__":
