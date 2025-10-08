@@ -24,7 +24,7 @@ graph TD
     User[End User] --> CF[CloudFront Distribution]
     CF -->|Static assets| FrontendBucket[(Frontend S3 Bucket)]
     CF -->|/api/*| ChatUrl[Lambda Function URL]
-    ChatUrl --> ChatLambda[Chat Lambda (Docker)]
+    ChatUrl --> ChatLambda["Chat Lambda (Docker)"]
     ChatLambda --> SessionBucket[(Chat Session Bucket)]
     ChatLambda --> Secret[(Aurora Secret)]
     ChatLambda -->|RDS Data API| Aurora[(Aurora PostgreSQL Serverless v2)]
