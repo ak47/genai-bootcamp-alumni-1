@@ -9,6 +9,14 @@ class Frontend(Construct):
     """
 
     """
+    TODO: CloudFront distribution
+
+    Create a CloudFornt distribution to serve the frontend from the S3 bucket.
+    Configure appropriate permissions to allow CloudFront to read from the S3 bucket.
+    For now we will use the standard CloudFront provided hostname.
+    """
+
+    """
     TODO: Route to Backend
 
     Make the backend available at /api/
