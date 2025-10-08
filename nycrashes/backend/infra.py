@@ -176,7 +176,7 @@ class Backend(Construct):
             self,
             "ChatFunction",
             code=chat_image_code,
-            timeout=Duration.minutes(1),
+            timeout=Duration.minutes(5),
             memory_size=1024,
             log_retention=logs.RetentionDays.ONE_MONTH,
             environment={
