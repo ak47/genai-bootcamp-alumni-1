@@ -1,0 +1,48 @@
+name: Reusable Deploy CDK
+
+on:
+  workflow_call:
+    inputs:
+      project_directory:
+        required: true
+        type: string
+    secrets:
+      aws_role_arn:
+        required: true
+
+jobs:
+  deploy:
+    permissions:
+      id-token: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: ${{ secrets.aws_role_arn }}
+          aws-region: us-west-2
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Deploy CDK
+        run: |
+          cd ${{ inputs.project_directory }}
+          uv run cdk deploy --all --require-approval=never

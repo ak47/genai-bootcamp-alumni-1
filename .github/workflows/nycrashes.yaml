@@ -1,0 +1,15 @@
+name: Deploy NY Crashes Chat Infrastructure
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/reusable-deploy-cdk.yaml
+    with:
+      project_directory: nycrashes
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
