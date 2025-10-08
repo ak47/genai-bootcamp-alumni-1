@@ -1,4 +1,4 @@
-from aws_cdk import Aws, BundlingOptions, CfnOutput, Duration, RemovalPolicy
+from aws_cdk import Aws, BundlingOptions, CfnOutput, CustomResource, Duration, RemovalPolicy
 import aws_cdk.aws_ec2 as ec2
 import aws_cdk.aws_iam as iam
 import aws_cdk.aws_lambda as _lambda
@@ -45,8 +45,8 @@ class Backend(Construct):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             encryption=s3.BucketEncryption.S3_MANAGED,
             enforce_ssl=True,
-            removal_policy=RemovalPolicy.RETAIN,
-            auto_delete_objects=False,
+            removal_policy=RemovalPolicy.DESTROY,
+            auto_delete_objects=True,
         )
 
         import_role = iam.Role(
@@ -79,6 +79,8 @@ class Backend(Construct):
             s3_import_role=import_role,
             removal_policy=RemovalPolicy.DESTROY,
         )
+        if self.cluster.secret:
+            self.cluster.secret.apply_removal_policy(RemovalPolicy.DESTROY)
 
         self.populator_function = _lambda.Function(
             self,
@@ -147,7 +149,7 @@ class Backend(Construct):
             log_retention=logs.RetentionDays.ONE_WEEK,
         )
 
-        self.database_populator = cr.CustomResource(
+        self.database_populator = CustomResource(
             self,
             "PopulateDatabase",
             service_token=self.populator_provider.service_token,
