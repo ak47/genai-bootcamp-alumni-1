@@ -40,6 +40,17 @@ BEDROCK_MODEL = BedrockModel(
 
 current_agent = None
 
+def build_mcp_environment() -> dict[str, str]:
+    env = dict(os.environ)
+    credentials = BOTO_SESSION.get_credentials()
+    if credentials:
+        frozen = credentials.get_frozen_credentials()
+        env["AWS_ACCESS_KEY_ID"] = frozen.access_key
+        env["AWS_SECRET_ACCESS_KEY"] = frozen.secret_key
+        if frozen.token:
+            env["AWS_SESSION_TOKEN"] = frozen.token
+    return env
+
 @asynccontextmanager
 async def session(id: str):
     stdio_mcp_client = MCPClient(lambda: stdio_client(
@@ -53,6 +64,7 @@ async def session(id: str):
                 "--region", AWS_REGION,
                 "--readonly", "True",
             ],
+            env=build_mcp_environment(),
         )
     ))
 

@@ -194,7 +194,7 @@ class Backend(Construct):
                     "bedrock:InvokeModel",
                     "bedrock:InvokeModelWithResponseStream",
                 ],
-                resources=[f"arn:aws:bedrock:{Aws.REGION}::foundation-model/*"],
+                resources=["*"],
             )
         )
 
