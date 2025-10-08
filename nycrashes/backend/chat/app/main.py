@@ -8,6 +8,7 @@ from strands.models import BedrockModel
 from strands.session.s3_session_manager import S3SessionManager
 from strands.tools.mcp import MCPClient
 import boto3
+import json
 import logging
 import os
 import uuid
@@ -25,6 +26,7 @@ logging.basicConfig(
     format="%(levelname)s | %(name)s | %(message)s", 
     handlers=[logging.StreamHandler()]
 )
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """
 You are a helpful assistant that answers questions about New York City motor vehicle crashes.

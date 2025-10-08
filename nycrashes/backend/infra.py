@@ -82,12 +82,12 @@ class Backend(Construct):
         self.populator_function = _lambda.Function(
             self,
             "PopulatorFunction",
-            runtime=_lambda.Runtime.PYTHON_3_12,
+            runtime=_lambda.Runtime.PYTHON_3_13,
             handler="main.handler",
             code=_lambda.Code.from_asset(
                 "backend/populator",
                 bundling=BundlingOptions(
-                    image=_lambda.Runtime.PYTHON_3_12.bundling_image,
+                    image=_lambda.Runtime.PYTHON_3_13.bundling_image,
                     command=[
                         "bash",
                         "-c",
@@ -142,15 +142,14 @@ class Backend(Construct):
         )
 
         chat_bundling = BundlingOptions(
-            image=_lambda.Runtime.PYTHON_3_12.bundling_image,
+            image=_lambda.Runtime.PYTHON_3_13.bundling_image,
             command=[
                 "bash",
                 "-c",
                 "pip install uv && "
                 "uv export --frozen --no-dev --no-editable -o requirements.txt && "
                 "pip install --require-hashes -r requirements.txt -t /asset-output && "
-                "pip install uv -t /asset-output && "
-                "cp -r . /asset-output",
+                "cp -r app/* /asset-output/",
             ],
             user="root",
             platform="linux/amd64",
@@ -161,27 +160,26 @@ class Backend(Construct):
             "LambdaWebAdapterLayer",
             layer_version_arn=(
                 "arn:aws:lambda:"
-                f"{Aws.REGION}:753240598075:layer:LambdaAdapterLayerX86:22"
+                f"{Aws.REGION}:753240598075:layer:LambdaAdapterLayerX86:25"
             ),
         )
 
         self.chat_function = _lambda.Function(
             self,
             "ChatFunction",
-            runtime=_lambda.Runtime.PYTHON_3_12,
-            handler="app.main.app",
+            runtime=_lambda.Runtime.PYTHON_3_13,
+            handler="run.sh",
             code=_lambda.Code.from_asset("backend/chat", bundling=chat_bundling),
             timeout=Duration.minutes(1),
             memory_size=1024,
             log_retention=logs.RetentionDays.ONE_MONTH,
             environment={
                 "AWS_LAMBDA_EXEC_WRAPPER": "/opt/bootstrap",
-                "AWS_LWA_INVOKE_MODE": "RESPONSE_STREAM",
+                "AWS_LWA_INVOKE_MODE": "response_stream",
                 "CLUSTER_ARN": self.cluster.cluster_arn,
                 "DATABASE_NAME": self.DATABASE_NAME,
                 "MODEL_ID": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
                 "PORT": "8080",
-                "PATH": "/var/task/bin:/usr/local/bin:/usr/bin:/bin",
                 "SECRET_ARN": self.cluster.secret.secret_arn,
                 "STATE_BUCKET": self.session_bucket.bucket_name,
             },
