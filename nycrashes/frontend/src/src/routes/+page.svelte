@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { afterUpdate, onMount } from 'svelte';
 	import { fade } from 'svelte/transition';
+	import { renderMarkdown } from '$lib';
 
 	type Role = 'user' | 'assistant';
 
@@ -369,6 +370,13 @@
 			});
 		}
 	});
+
+	function assistantHtml(message: Message): string {
+		if (!message.text.trim()) {
+			return message.isStreaming ? renderMarkdown('...') : '';
+		}
+		return renderMarkdown(message.text);
+	}
 </script>
 
 <div class="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950/80 to-slate-950">
@@ -495,9 +503,15 @@
 													</span>
 												{/if}
 											</div>
-											<p class="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-100 [word-break:break-word]">
-												{message.text || (message.isStreaming ? '...' : '')}
-											</p>
+											{#if message.role === 'assistant'}
+												<div class="mt-3 text-sm leading-relaxed text-slate-100 [overflow-wrap:anywhere] prose prose-invert prose-sm max-w-none prose-p:my-0 prose-headings:text-slate-100 prose-strong:text-slate-100 prose-em:text-slate-200 prose-a:text-sky-300 prose-a:no-underline hover:prose-a:text-sky-200 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-pre:rounded-2xl prose-pre:bg-slate-900/80 prose-pre:text-slate-100 prose-code:bg-slate-900/70 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded">
+													{@html assistantHtml(message)}
+												</div>
+											{:else}
+												<p class="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-100 [overflow-wrap:anywhere]">
+													{message.text}
+												</p>
+											{/if}
 										</div>
 									</div>
 								</div>
