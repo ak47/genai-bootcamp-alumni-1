@@ -146,10 +146,18 @@ class Backend(Construct):
             command=[
                 "bash",
                 "-c",
-                "pip install uv && "
-                "uv export --frozen --no-dev --no-editable -o requirements.txt && "
-                "pip install --require-hashes -r requirements.txt -t /asset-output && "
-                "cp -r app/* /asset-output/",
+                (
+                    "set -euo pipefail && "
+                    "pip install uv && "
+                    "UV_BIN=/var/lang/bin/uv && "
+                    "UVX_BIN=/var/lang/bin/uvx && "
+                    "uv export --frozen --no-dev --no-editable -o requirements.txt && "
+                    "pip install --require-hashes -r requirements.txt -t /asset-output && "
+                    "mkdir -p /asset-output/bin && "
+                    "cp \"${UV_BIN}\" /asset-output/bin/uv && "
+                    "cp \"${UVX_BIN}\" /asset-output/bin/uvx && "
+                    "cp -r app/* /asset-output/"
+                ),
             ],
             user="root",
             platform="linux/amd64",
@@ -182,6 +190,8 @@ class Backend(Construct):
                 "PORT": "8080",
                 "SECRET_ARN": self.cluster.secret.secret_arn,
                 "STATE_BUCKET": self.session_bucket.bucket_name,
+                "UV_CACHE_DIR": "/tmp/.cache/uv",
+                "HOME": "/tmp", # trying to avoid issues with home being readonly
             },
             layers=[adapter_layer],
         )

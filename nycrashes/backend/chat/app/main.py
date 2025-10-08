@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 from mcp import stdio_client, StdioServerParameters
@@ -6,13 +7,13 @@ from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands import Agent
 from strands.models import BedrockModel
 from strands.session.s3_session_manager import S3SessionManager
-from strands.tools.mcp import MCPClient
 import boto3
 import json
 import logging
 import os
 import uuid
 import uvicorn
+from strands.tools.mcp import MCPClient
 
 AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
 BOTO_SESSION = boto3.Session()
@@ -28,6 +29,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+uv_cache_dir = os.environ.get("UV_CACHE_DIR", "")
+os.makedirs(uv_cache_dir, exist_ok=True)
+
 SYSTEM_PROMPT = """
 You are a helpful assistant that answers questions about New York City motor vehicle crashes.
 """
@@ -37,9 +41,10 @@ BEDROCK_MODEL = BedrockModel(
     # Add Guardrails here if desired
 )
 
-def session(id: str) -> Agent:
-    # Add the Postgres MCP tool
-    ## See https://awslabs.github.io/mcp/servers/postgres-mcp-server/ for details on where the args come from
+current_agent = None
+
+@asynccontextmanager
+async def session(id: str):
     stdio_mcp_client = MCPClient(lambda: stdio_client(
         StdioServerParameters(
             command="uvx", 
@@ -53,7 +58,6 @@ def session(id: str) -> Agent:
             ],
         )
     ))
-    tools = stdio_mcp_client.list_tools_sync()
 
     # Get/create conversation in S3
     session_manager = S3SessionManager(
@@ -66,12 +70,18 @@ def session(id: str) -> Agent:
         should_truncate_results=True, # Enable truncating the tool result when a message is too large for the model's context window 
     )
     
-    return Agent(
-        conversation_manager=conversation_manager,
-        model=BEDROCK_MODEL,
-        session_manager=session_manager,
-        tools=tools,
-    )
+    with stdio_mcp_client:
+        tools = stdio_mcp_client.list_tools_sync()
+        agent = Agent(
+            conversation_manager=conversation_manager,
+            model=BEDROCK_MODEL,
+            session_manager=session_manager,
+            tools=tools,
+        )
+        try:
+            yield agent
+        finally:
+            pass
 
 class ChatRequest(BaseModel):
     prompt: str
@@ -81,44 +91,45 @@ app = FastAPI()
 @app.post('/api/chat')
 async def chat(chat_request: ChatRequest, request: Request):
     session_id: str = request.cookies.get("session_id", str(uuid.uuid4()))
-    agent = session(session_id)
-    global current_agent
-    current_agent = agent  # Store the current agent for use in tools
     response = StreamingResponse(
-        generate(agent, session_id, chat_request.prompt, request),
+        generate(session_id, chat_request.prompt, request),
         media_type="text/event-stream"
     )
     response.set_cookie(key="session_id", value=session_id)
     return response
 
-async def generate(agent: Agent, session_id: str, prompt: str, request: Request):
-    try:
-        async for event in agent.stream_async(prompt):
-            if "complete" in event:
-                logger.info("Response generation complete")
-            if "data" in event:
-                yield f"data: {json.dumps(event['data'])}\n\n"
-    except Exception as e:
-        error_message = json.dumps({"error": str(e)})
-        yield f"event: error\ndata: {error_message}\n\n"
+async def generate(session_id: str, prompt: str, request: Request):
+    async with session(session_id) as agent:
+        global current_agent
+        current_agent = agent  # Store the current agent for use in tools
+        try:
+            async for event in agent.stream_async(prompt):
+                if "complete" in event:
+                    logger.info("Response generation complete")
+                if "data" in event:
+                    yield f"data: {json.dumps(event['data'])}\n\n"
+        except Exception as e:
+            error_message = json.dumps({"error": str(e)})
+            yield f"event: error\ndata: {error_message}\n\n"
+        finally:
+            current_agent = None
 
 @app.get('/api/chat')
-def chat_get(request: Request):
+async def chat_get(request: Request):
     session_id = request.cookies.get("session_id", str(uuid.uuid4()))
-    agent = session(session_id)
-
-    # Filter messages to only include first text content
-    filtered_messages = []
-    for message in agent.messages:
-        if (message.get("content") and 
-            len(message["content"]) > 0 and 
-            "text" in message["content"][0]):
-            filtered_messages.append({
-                "role": message["role"],
-                "content": [{
-                    "text": message["content"][0]["text"]
-                }]
-            })
+    async with session(session_id) as agent:
+        # Filter messages to only include first text content
+        filtered_messages = []
+        for message in agent.messages:
+            if (message.get("content") and 
+                len(message["content"]) > 0 and 
+                "text" in message["content"][0]):
+                filtered_messages.append({
+                    "role": message["role"],
+                    "content": [{
+                        "text": message["content"][0]["text"]
+                    }]
+                })
  
     response = Response(
         content=json.dumps({
