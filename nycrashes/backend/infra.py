@@ -141,43 +141,12 @@ class Backend(Construct):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        chat_bundling = BundlingOptions(
-            image=_lambda.Runtime.PYTHON_3_13.bundling_image,
-            command=[
-                "bash",
-                "-c",
-                (
-                    "set -euo pipefail && "
-                    "pip install uv && "
-                    "UV_BIN=/var/lang/bin/uv && "
-                    "UVX_BIN=/var/lang/bin/uvx && "
-                    "uv export --frozen --no-dev --no-editable -o requirements.txt && "
-                    "pip install --require-hashes -r requirements.txt -t /asset-output && "
-                    "mkdir -p /asset-output/bin && "
-                    "cp \"${UV_BIN}\" /asset-output/bin/uv && "
-                    "cp \"${UVX_BIN}\" /asset-output/bin/uvx && "
-                    "cp -r app/* /asset-output/"
-                ),
-            ],
-            user="root",
-            platform="linux/amd64",
-        )
+        chat_image_code = _lambda.DockerImageCode.from_image_asset("backend/chat")
 
-        adapter_layer = _lambda.LayerVersion.from_layer_version_arn(
-            self,
-            "LambdaWebAdapterLayer",
-            layer_version_arn=(
-                "arn:aws:lambda:"
-                f"{Aws.REGION}:753240598075:layer:LambdaAdapterLayerX86:25"
-            ),
-        )
-
-        self.chat_function = _lambda.Function(
+        self.chat_function = _lambda.DockerImageFunction(
             self,
             "ChatFunction",
-            runtime=_lambda.Runtime.PYTHON_3_13,
-            handler="run.sh",
-            code=_lambda.Code.from_asset("backend/chat", bundling=chat_bundling),
+            code=chat_image_code,
             timeout=Duration.minutes(1),
             memory_size=1024,
             log_retention=logs.RetentionDays.ONE_MONTH,
@@ -190,10 +159,8 @@ class Backend(Construct):
                 "PORT": "8080",
                 "SECRET_ARN": self.cluster.secret.secret_arn,
                 "STATE_BUCKET": self.session_bucket.bucket_name,
-                "UV_CACHE_DIR": "/tmp/.cache/uv",
-                "HOME": "/tmp", # trying to avoid issues with home being readonly
+                "HOME": "/tmp", # work around issues with home being readonly
             },
-            layers=[adapter_layer],
         )
 
         self.session_bucket.grant_read_write(self.chat_function)

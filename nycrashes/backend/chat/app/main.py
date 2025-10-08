@@ -29,9 +29,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-uv_cache_dir = os.environ.get("UV_CACHE_DIR", "")
-os.makedirs(uv_cache_dir, exist_ok=True)
-
 SYSTEM_PROMPT = """
 You are a helpful assistant that answers questions about New York City motor vehicle crashes.
 """
