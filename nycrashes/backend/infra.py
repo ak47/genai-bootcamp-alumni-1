@@ -5,14 +5,19 @@ import aws_cdk.aws_lambda as _lambda
 import aws_cdk.aws_logs as logs
 import aws_cdk.aws_rds as rds
 import aws_cdk.aws_s3 as s3
+import aws_cdk.aws_s3_deployment as s3deploy
 import aws_cdk.custom_resources as cr
 from constructs import Construct
 
 
 class Backend(Construct):
-    DATA_SOURCE_BUCKET = "nyc-crashdata"
-    DATA_SOURCE_KEY = "Motor_Vehicle_Collisions_-_Crashes_20251007.csv"
-    DATABASE_NAME = "nycrashes"
+    NYC_DATA_KEY = "Motor_Vehicle_Collisions_-_Crashes_20251007.csv"
+    CA_DATA_KEYS = [
+        "2025crashes.csv",
+        "2025injuredwitnesspassengers.csv", 
+        "2025parties.csv"
+    ]
+    DATABASE_NAME = "vehicle_crashes"
 
     def __init__(self, scope: Construct, construct_id: str, *, vpc: ec2.IVpc) -> None:
         super().__init__(scope, construct_id)
@@ -47,6 +52,17 @@ class Backend(Construct):
             enforce_ssl=True,
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
+        )
+
+        # Deploy crash data CSV files to the source bucket
+        s3deploy.BucketDeployment(
+            self,
+            "CrashDataDeployment",
+            sources=[
+                s3deploy.Source.asset("..", exclude=["*", "!2025*.csv", "!Motor_Vehicle_Collisions*.csv"])
+            ],
+            destination_bucket=self.source_bucket,
+            prune=False,
         )
 
         import_role = iam.Role(
@@ -109,10 +125,9 @@ class Backend(Construct):
             security_groups=[self.lambda_security_group],
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
             environment={
-                "SOURCE_DATA_BUCKET": self.DATA_SOURCE_BUCKET,
-                "SOURCE_DATA_KEY": self.DATA_SOURCE_KEY,
-                "DESTINATION_BUCKET": self.source_bucket.bucket_name,
-                "DESTINATION_KEY": self.DATA_SOURCE_KEY,
+                "DATA_BUCKET": self.source_bucket.bucket_name,
+                "NYC_DATA_KEY": self.NYC_DATA_KEY,
+                "CA_DATA_KEYS": ",".join(self.CA_DATA_KEYS),
                 "CLUSTER_ARN": self.cluster.cluster_arn,
                 "SECRET_ARN": self.cluster.secret.secret_arn,
                 "DATABASE_NAME": self.DATABASE_NAME,
@@ -124,16 +139,6 @@ class Backend(Construct):
         self.cluster.secret.grant_read(self.populator_function)
         self.cluster.grant_data_api_access(self.populator_function)
         self.cluster.connections.allow_default_port_from(self.populator_function)
-
-        self.populator_function.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["s3:GetObject", "s3:ListBucket"],
-                resources=[
-                    f"arn:aws:s3:::{self.DATA_SOURCE_BUCKET}",
-                    f"arn:aws:s3:::{self.DATA_SOURCE_BUCKET}/*",
-                ],
-            )
-        )
 
         self.populator_function.add_to_role_policy(
             iam.PolicyStatement(
@@ -154,7 +159,8 @@ class Backend(Construct):
             "PopulateDatabase",
             service_token=self.populator_provider.service_token,
             properties={
-                "DataObjectKey": self.DATA_SOURCE_KEY,
+                "NYCDataKey": self.NYC_DATA_KEY,
+                "CaliforniaDataKeys": self.CA_DATA_KEYS,
                 "DatabaseName": self.DATABASE_NAME,
             },
         )
