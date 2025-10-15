@@ -308,8 +308,7 @@ def create_california_tables() -> None:
             ejected TEXT,
             is_vovc_notified BOOLEAN,
             party_number INTEGER,
-            seat_position_description TEXT,
-            FOREIGN KEY (collision_id) REFERENCES ca_crashes(collision_id)
+            seat_position_description TEXT
         );
         """,
         database=DATABASE_NAME,
@@ -366,8 +365,7 @@ def create_california_tables() -> None:
             lane TEXT,
             thru_lanes INTEGER,
             total_lanes INTEGER,
-            is_dre_conducted BOOLEAN,
-            FOREIGN KEY (collision_id) REFERENCES ca_crashes(collision_id)
+            is_dre_conducted BOOLEAN
         );
         """,
         database=DATABASE_NAME,
