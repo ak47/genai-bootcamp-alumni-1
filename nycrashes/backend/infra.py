@@ -54,17 +54,6 @@ class Backend(Construct):
             auto_delete_objects=True,
         )
 
-        # Deploy crash data CSV files to the source bucket
-        s3deploy.BucketDeployment(
-            self,
-            "CrashDataDeployment",
-            sources=[
-                s3deploy.Source.asset("..", exclude=["*", "!2025*.csv", "!Motor_Vehicle_Collisions*.csv"])
-            ],
-            destination_bucket=self.source_bucket,
-            prune=False,
-        )
-
         import_role = iam.Role(
             self,
             "AuroraS3ImportRole",
